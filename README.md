@@ -118,9 +118,11 @@ Používame **OAuth2 Authorization Code Flow** s OIDC, kde OAuth klient je **bac
 
   FE->>BFF: GET /api/me
   BFF-->>FE: 200 me payload (roles)
+
 ```
 
 **Kroky v diagrame (po bodoch):**
+
 1. Browser načíta FE (`GET /`).
 2. FE zavolá backend `GET /api/me` – kontrola, či existuje prihlásená session.
 3. Ak session neexistuje, backend vráti `401/302` a začne login flow.
@@ -192,7 +194,14 @@ sequenceDiagram
 ### GET /api/me
 - Auth: vyžaduje autentifikovanú session (JSESSIONID)
 - Response (príklad):
-json { "username": "example.user", "name": "Example User", "email": "example.user@example.invalid", "roles": ["ADMIN", "HR"] }
+```json
+{
+  "username": "example.user",
+  "name": "Example User",
+  "email": "example.user@example.invalid",
+  "roles": ["ADMIN", "HR"]
+ }
+```
 
 ---
 # Variant A: Role mapping (UPPERCASE)
