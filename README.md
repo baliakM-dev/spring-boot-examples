@@ -13,6 +13,44 @@ Frontend (Vue) **nepoužíva JWT tokeny** na autentifikáciu — autentifikácia
 
 ---
 
+## Quick start (DEV)
+
+### Požadované ENV premenné
+- `KEYCLOAK_CLIENT_SECRET=<SECRET>`
+- `KEYCLOAK_ISSUER_URI=http://localhost:8081/realms/my_realm`
+- `APP_FRONTEND_URL=http://localhost:3000`
+
+### Spustenie
+1. Spusti Keycloak na `http://localhost:8081`
+2. Spusti backend na `http://localhost:8080`
+3. Spusti frontend na `http://localhost:3000`
+
+### Overenie
+- Otvor `http://localhost:3000`
+- Po kliknutí na protected route (napr. Admin/HR) prebehne redirect na Keycloak login
+- Po návrate FE zavolá `GET /api/me` a zobrazí roly
+
+---
+
+## Keycloak konfigurácia (minimum)
+
+### Klient (OIDC)
+- Client type: OIDC
+- Flow: Authorization Code
+- Redirect URI:
+  - DEV: `http://localhost:8080/login/oauth2/code/keycloak`
+- Post logout redirect URI:
+  - DEV: `http://localhost:3000/`
+- Web origins:
+  - DEV: `http://localhost:3000` (ak používaš CORS)
+
+### Role claim
+Aplikácia očakáva claim `roles` (Collection/String list).
+- napr. `roles: ["admin","hr"]`
+Backend to normalizuje na `ADMIN/HR`.
+
+---
+
 ## Prečo BFF + session cookies (bez JWT na FE)
 
 ### Hlavné dôvody
@@ -47,7 +85,7 @@ Používame **OAuth2 Authorization Code Flow** s OIDC, kde OAuth klient je **bac
 
 ---
 
-## Login flow — “klasický” diagram (Mermaid)
+## Login flow — “klasický” diagram
 
 > Ak tvoj renderer nepodporuje Mermaid, nižšie je aj textová verzia.
 
@@ -86,7 +124,7 @@ sequenceDiagram
 
 ---
 
-## Login flow — textová verzia (HTTP/redirect reťazec)
+## Login flow — detailný diagram
 ```mermaid
 sequenceDiagram
   autonumber
@@ -164,6 +202,13 @@ sequenceDiagram
 
 ---
 
+## API kontrakt
+
+### GET /api/me
+- Auth: vyžaduje autentifikovanú session (JSESSIONID)
+- Response (príklad):
+
+---
 # Variant A: Role mapping (UPPERCASE)
 
 - Keycloak claim: `roles` (napr. `["admin","hr"]`)
@@ -267,5 +312,23 @@ sequenceDiagram
 4. ✅ HSTS zapnúť (iba na HTTPS)
 5. ✅ CORS len na FE doménu + `allowCredentials=true`
 6. ✅ CSRF zapnuté a `/logout` CSRF-protected
+
+---
+## Troubleshooting
+
+### 403 na POST /logout
+- FE musí posielať `credentials: "include"`
+- FE musí posielať `X-XSRF-TOKEN` header (z cookie `XSRF-TOKEN`)
+- CORS musí povoľovať `X-XSRF-TOKEN`
+
+### Login redirect loop
+Najčastejšie príčiny:
+- zlá `KEYCLOAK_ISSUER_URI`
+- zlá `redirect_uri` v Keycloak klientovi
+- cookie sa neuloží/neposiela (napr. Secure cookie na HTTP, proxy nastavenie)
+
+### FE nevie načítať usera (/api/me vracia 401)
+- request musí byť s `credentials: "include"`
+- CORS origin musí byť presne FE URL (nie `*`)
 
 ---
