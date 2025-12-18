@@ -85,71 +85,18 @@ Používame **OAuth2 Authorization Code Flow** s OIDC, kde OAuth klient je **bac
 
 ---
 
-## Login flow — “klasický” diagram
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant U as User/Browser
-  participant FE as Frontend (3000)
-  participant BFF as Backend/BFF (8080)
-  participant KC as Keycloak (8081)
-
-  U->>FE: Open app (/)
-  FE-->>U: App loaded
-
-  FE->>BFF: GET /api/me
-  BFF-->>FE: 401/302 (login)
-
-  U->>BFF: GET /oauth2/authorization/keycloak
-  Note over BFF: Create state+nonce (session)
-  BFF-->>U: 302 -> KC /auth
-
-  U->>KC: Login (OIDC auth)
-  KC-->>U: 302 -> BFF callback (code,state)
-
-  U->>BFF: GET /login/oauth2/code/keycloak
-  Note over BFF: Validate state
-  BFF->>KC: POST /token (server-to-server)
-  KC-->>BFF: Tokens
-
-  Note over BFF: Create session + map roles (ADMIN/HR)
-  BFF-->>U: 302 -> FE /\nSet-Cookie: JSESSIONID\nSet-Cookie: XSRF-TOKEN
-
-  FE->>BFF: GET /api/me
-  BFF-->>FE: 200 me (roles)
-```
-
-**Kroky v logout diagrame (po bodoch):**
-1. **U → FE:** Používateľ otvorí aplikáciu (`/`). Frontend sa načíta (HTML/JS).
-2. **FE → BFF:** Frontend zavolá `GET /api/me` (zistí, či existuje prihlásená session).
-3. **BFF → FE:** Keď session neexistuje alebo je neplatná, backend vráti `401/302` a tým odštartuje login flow.
-4. **U → BFF:** Browser prejde na `/oauth2/authorization/keycloak` (Spring endpoint, ktorý začne OIDC login).
-5. **BFF (Note):** Backend vytvorí OIDC ochranné hodnoty `state` + `nonce` a uloží ich do server-side session.
-6. **BFF → U:** Backend vráti `302` redirect na Keycloak authorization endpoint (`/auth`).
-7. **U → KC:** Používateľ sa prihlási v Keycloaku (alebo prebehne SSO).
-8. **KC → U:** Keycloak vráti `302` redirect späť na backend callback (`/login/oauth2/code/keycloak`) s `code` a `state`.
-9. **U → BFF:** Browser zavolá backend callback. Backend overí `state` (či sedí so session) a tým potvrdí, že flow nie je podvrhnutý.
-10. **BFF → KC:** Backend spraví server-to-server volanie `POST /token` a vymení `code` za tokeny (tokeny nejdú do frontendu).
-11. **KC → BFF:** Keycloak vráti tokeny (napr. ID token + access token).
-12. **BFF (Note):** Backend vytvorí autentifikovanú session a namapuje roly z claimu `roles` na `ROLE_ADMIN/ROLE_HR`.
-13. **BFF → U:** Backend presmeruje browser späť na frontend (`302 -> FE /`) a nastaví cookies:
-    - `JSESSIONID` (HttpOnly) – session
-    - `XSRF-TOKEN` – CSRF token pre frontend
-14. **FE → BFF:** Frontend po návrate zavolá `GET /api/me` znova, tentoraz už s `JSESSIONID`.
-15. **BFF → FE:** Backend vráti `200` a payload s userom a rolami (`ADMIN/HR`).
----
-
 ## Login flow — detailný diagram
 ```mermaid
-sequenceDiagram
+ sequenceDiagram
   autonumber
   participant Browser as User/Browser
+  participant FE as Frontend (3000)
   participant BFF as Backend/BFF (8080)
   participant KC as Keycloak (8081)
-  participant FE as Frontend (3000)
 
   Browser->>FE: GET /
+  FE-->>Browser: App loaded
+
   FE->>BFF: GET /api/me
   BFF-->>FE: 401/302 (login)
 
@@ -157,47 +104,34 @@ sequenceDiagram
   Note over BFF: Create state + nonce\nStore in session
   BFF-->>Browser: 302 -> KC /auth
 
-  Browser->>KC: GET /auth (state, nonce)
-  KC-->>Browser: 302 -> BFF /login/oauth2/code/keycloak (code, state)
+  Browser->>KC: GET /auth (OIDC login)
+  KC-->>Browser: 302 -> BFF callback (code, state)
 
   Browser->>BFF: GET /login/oauth2/code/keycloak
   Note over BFF: Validate state
   BFF->>KC: POST /token (server-to-server)
   KC-->>BFF: tokens
 
-  Note over BFF: Create authenticated session\nMap roles -> ROLE_ADMIN/ROLE_HR\nIssue cookies
+  Note over BFF: Create session\nMap roles -> ROLE_ADMIN/ROLE_HR\nSet cookies
   BFF-->>Browser: 302 -> FE /
-  Note over Browser: Cookies set for BFF:\nJSESSIONID (HttpOnly)\nXSRF-TOKEN
+  Note over Browser: Cookies for BFF:\nJSESSIONID (HttpOnly)\nXSRF-TOKEN
 
   FE->>BFF: GET /api/me
-  BFF-->>FE: 200 me payload
+  BFF-->>FE: 200 me payload (roles)
 ```
-**Kroky v logout diagrame (po bodoch):**
-1. **Browser → FE:** Browser načíta frontend `GET /`.
-2. **FE → BFF:** Frontend zavolá `GET /api/me` (kontrola, či je user prihlásený).
-3. **BFF → FE:** Backend vráti `401/302 (login)`, lebo neexistuje platná session.
 
-4. **Browser → BFF:** Browser ide na `GET /oauth2/authorization/keycloak` (štart OIDC login flow v Spring).
-5. **BFF (Note):** Backend vytvorí `state` a `nonce` a uloží ich do server-side session (ochrana flow).
-6. **BFF → Browser:** Backend odpovie `302` redirectom na Keycloak `/auth`.
-
-7. **Browser → KC:** Browser zavolá Keycloak authorization endpoint `GET /auth` (už obsahuje `state`/`nonce` a ďalšie parametre).
-8. **KC → Browser:** Keycloak po prihlásení vráti `302` redirect na backend callback `GET /login/oauth2/code/keycloak` s `code` a `state`.
-9. **Browser → BFF:** Browser zavolá backend callback `GET /login/oauth2/code/keycloak`.
-10. **BFF (Note):** Backend overí `state` (musí sedieť s tým, čo je uložené v session).
-11. **BFF → KC:** Backend zavolá Keycloak `POST /token` (server-to-server) a vymení `code` za tokeny.
-12. **KC → BFF:** Keycloak vráti tokeny.
-13. **BFF (Note):** Backend:
-    - vytvorí autentifikovanú session (SecurityContext v session),
-    - namapuje roly z claimu `roles` na `ROLE_ADMIN/ROLE_HR`,
-    - pripraví cookies pre browser (`JSESSIONID`, `XSRF-TOKEN`).
-14. **BFF → Browser:** Backend spraví `302` redirect späť na FE (`/`).
-15. **Browser (Note):** Browser má nastavené cookies pre backend:
-    - `JSESSIONID` (HttpOnly)
-    - `XSRF-TOKEN` (pre CSRF)
-
-16. **FE → BFF:** Frontend zavolá `GET /api/me` znova (už s `JSESSIONID`).
-17. **BFF → FE:** Backend vráti `200` a payload s identitou a rolami. 
+**Kroky v diagrame (po bodoch):**
+1. Browser načíta FE (`GET /`).
+2. FE zavolá backend `GET /api/me` – kontrola, či existuje prihlásená session.
+3. Ak session neexistuje, backend vráti `401/302` a začne login flow.
+4. Browser ide na `/oauth2/authorization/keycloak` (štart OIDC).
+5. Backend vytvorí `state` + `nonce`, uloží ich do session a redirectne na Keycloak `/auth`.
+6. Keycloak spraví login a redirectne späť na backend callback s `code` + `state`.
+7. Backend overí `state`, potom server-to-server zavolá Keycloak `POST /token`.
+8. Backend vytvorí autentifikovanú session a namapuje roly z claimu `roles` na `ROLE_ADMIN/ROLE_HR`.
+9. Backend nastaví cookies `JSESSIONID` (HttpOnly) a `XSRF-TOKEN` (CSRF) a pošle redirect na FE.
+10. FE znova zavolá `GET /api/me` a dostane user payload + roly.
+    
 ---
 
 # Logout flow (podrobne)
