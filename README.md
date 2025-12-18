@@ -59,43 +59,65 @@ sequenceDiagram
   participant BFF as Backend/BFF (8080)
   participant KC as Keycloak (8081)
 
-  U->>FE: GET http://localhost:3000/
-  FE-->>U: 200 HTML/JS
+  U->>FE: Open app (/)
+  FE-->>U: App loaded
 
-  FE->>BFF: GET http://localhost:8080/api/me (credentials: include)
-  BFF-->>FE: 401/302 -> /oauth2/authorization/keycloak
+  FE->>BFF: GET /api/me
+  BFF-->>FE: 401/302 (login)
 
   U->>BFF: GET /oauth2/authorization/keycloak
-  Note over BFF: Create state+nonce\nStore in server session
-  BFF-->>U: 302 Location: http://localhost:8081/.../auth?...state&nonce
+  Note over BFF: Create state+nonce (session)
+  BFF-->>U: 302 -> KC /auth
 
-  U->>KC: GET /auth?...client_id=bff-client&redirect_uri=http://localhost:8080/login/oauth2/code/keycloak
-  KC-->>U: Login UI / SSO
-  Note over KC: User authenticates
-  KC-->>U: 302 Location: http://localhost:8080/login/oauth2/code/keycloak?code=...&state=...
+  U->>KC: Login (OIDC auth)
+  KC-->>U: 302 -> BFF callback (code,state)
 
-  U->>BFF: GET /login/oauth2/code/keycloak?code=...&state=... (Cookie: JSESSIONID)
-  Note over BFF: Validate state\nExchange code -> tokens (server-to-server)
-  BFF->>KC: POST /token (code, client_id, client_secret)
-  KC-->>BFF: 200 {access_token, id_token, ...}
+  U->>BFF: GET /login/oauth2/code/keycloak
+  Note over BFF: Validate state
+  BFF->>KC: POST /token (server-to-server)
+  KC-->>BFF: Tokens
 
-  Note over BFF: Create authenticated session\nMap claim roles -> ROLE_ADMIN/ROLE_HR
-  BFF-->>U: 302 Location: http://localhost:3000/\nSet-Cookie: JSESSIONID (HttpOnly)\nSet-Cookie: XSRF-TOKEN
+  Note over BFF: Create session + map roles (ADMIN/HR)
+  BFF-->>U: 302 -> FE /\nSet-Cookie: JSESSIONID\nSet-Cookie: XSRF-TOKEN
 
-  FE->>BFF: GET /api/me (credentials: include, Cookie: JSESSIONID)
-  BFF-->>FE: 200 { username, email, roles:[ADMIN,HR] }
+  FE->>BFF: GET /api/me
+  BFF-->>FE: 200 me (roles)
 ```
 
 ---
 
 ## Login flow — textová verzia (HTTP/redirect reťazec)
-text FE -> BFF: GET /api/me (no JSESSIONID) BFF -> FE: 401/302 -> /oauth2/authorization/keycloak
-Browser -> BFF: GET /oauth2/authorization/keycloak BFF -> Browser: 302 -> Keycloak /auth?...state=...&nonce=...
-Browser -> Keycloak: GET /auth?...redirect_uri=[http://localhost:8080/login/oauth2/code/keycloak](http://localhost:8080/login/oauth2/code/keycloak) Keycloak -> Browser: 302 -> [http://localhost:8080/login/oauth2/code/keycloak?code=...&state=](http://localhost:8080/login/oauth2/code/keycloak?code=...&state=)...
-Browser -> BFF: GET /login/oauth2/code/keycloak?code=...&state=... (Cookie JSESSIONID) BFF -> Keycloak: POST /token (code + client_secret) [server-to-server] Keycloak -> BFF: 200 tokens BFF -> Browser: 302 -> [http://localhost:3000/](http://localhost:3000/) + Set-Cookie JSESSIONID + Set-Cookie XSRF-TOKEN
-FE -> BFF: GET /api/me (Cookie JSESSIONID) BFF -> FE: 200 me payload
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Browser as User/Browser
+  participant BFF as Backend/BFF (8080)
+  participant KC as Keycloak (8081)
+  participant FE as Frontend (3000)
 
+  Browser->>FE: GET /
+  FE->>BFF: GET /api/me
+  BFF-->>FE: 401/302 (login)
 
+  Browser->>BFF: GET /oauth2/authorization/keycloak
+  Note over BFF: Create state + nonce\nStore in session
+  BFF-->>Browser: 302 -> KC /auth
+
+  Browser->>KC: GET /auth (state, nonce)
+  KC-->>Browser: 302 -> BFF /login/oauth2/code/keycloak (code, state)
+
+  Browser->>BFF: GET /login/oauth2/code/keycloak
+  Note over BFF: Validate state
+  BFF->>KC: POST /token (server-to-server)
+  KC-->>BFF: tokens
+
+  Note over BFF: Create authenticated session\nMap roles -> ROLE_ADMIN/ROLE_HR\nIssue cookies
+  BFF-->>Browser: 302 -> FE /
+  Note over Browser: Cookies set for BFF:\nJSESSIONID (HttpOnly)\nXSRF-TOKEN
+
+  FE->>BFF: GET /api/me
+  BFF-->>FE: 200 me payload
+```
 ---
 
 # Logout flow (podrobne)
@@ -121,18 +143,23 @@ Logout je kombinácia:
 
 ```mermaid
 sequenceDiagram
-   autonumber
-   participant U as User/Browser
-   participant FE as Frontend (3000)
-   participant BFF as Backend/BFF (8080)
-   participant KC as Keycloak (8081)
-   Note over FE: User clicks "Logout"
-   FE->>BFF: POST /logout (credentials: include)\nHeader: X-XSRF-TOKEN\nCookie: JSESSIONID Note over BFF: Verify CSRF\nInvalidate session
-   BFF-->>FE: 302 -> Keycloak end-session
-   U->>KC: GET /logout?...post_logout_redirect_uri=[http://localhost:3000/](http://localhost:3000/) Note over KC: Clears SSO session cookies
-   KC-->>U: 302 -> [http://localhost:3000/](http://localhost:3000/)
-   FE->>BFF: GET /api/me (credentials: include)
-   BFF-->>FE: 401/302 -> login (not authenticated)
+  autonumber
+  participant U as User/Browser
+  participant FE as Frontend (3000)
+  participant BFF as Backend/BFF (8080)
+  participant KC as Keycloak (8081)
+
+  Note over U,FE: User clicks Logout
+  FE->>BFF: POST /logout (with CSRF + cookies)
+  Note over BFF: Verify CSRF\nInvalidate session
+  BFF-->>U: 302 -> KC end-session
+
+  U->>KC: GET /logout (post_logout_redirect_uri=FE)
+  Note over KC: Clear SSO session
+  KC-->>U: 302 -> FE /
+
+  FE->>BFF: GET /api/me
+  BFF-->>FE: 401/302 (not authenticated)
 ```
 
 ---
