@@ -87,8 +87,6 @@ Používame **OAuth2 Authorization Code Flow** s OIDC, kde OAuth klient je **bac
 
 ## Login flow — “klasický” diagram
 
-> Ak tvoj renderer nepodporuje Mermaid, nižšie je aj textová verzia.
-
 ```mermaid
 sequenceDiagram
   autonumber
@@ -122,6 +120,24 @@ sequenceDiagram
   BFF-->>FE: 200 me (roles)
 ```
 
+**Kroky v logout diagrame (po bodoch):**
+1. **U → FE:** Používateľ otvorí aplikáciu (`/`). Frontend sa načíta (HTML/JS).
+2. **FE → BFF:** Frontend zavolá `GET /api/me` (zistí, či existuje prihlásená session).
+3. **BFF → FE:** Keď session neexistuje alebo je neplatná, backend vráti `401/302` a tým odštartuje login flow.
+4. **U → BFF:** Browser prejde na `/oauth2/authorization/keycloak` (Spring endpoint, ktorý začne OIDC login).
+5. **BFF (Note):** Backend vytvorí OIDC ochranné hodnoty `state` + `nonce` a uloží ich do server-side session.
+6. **BFF → U:** Backend vráti `302` redirect na Keycloak authorization endpoint (`/auth`).
+7. **U → KC:** Používateľ sa prihlási v Keycloaku (alebo prebehne SSO).
+8. **KC → U:** Keycloak vráti `302` redirect späť na backend callback (`/login/oauth2/code/keycloak`) s `code` a `state`.
+9. **U → BFF:** Browser zavolá backend callback. Backend overí `state` (či sedí so session) a tým potvrdí, že flow nie je podvrhnutý.
+10. **BFF → KC:** Backend spraví server-to-server volanie `POST /token` a vymení `code` za tokeny (tokeny nejdú do frontendu).
+11. **KC → BFF:** Keycloak vráti tokeny (napr. ID token + access token).
+12. **BFF (Note):** Backend vytvorí autentifikovanú session a namapuje roly z claimu `roles` na `ROLE_ADMIN/ROLE_HR`.
+13. **BFF → U:** Backend presmeruje browser späť na frontend (`302 -> FE /`) a nastaví cookies:
+    - `JSESSIONID` (HttpOnly) – session
+    - `XSRF-TOKEN` – CSRF token pre frontend
+14. **FE → BFF:** Frontend po návrate zavolá `GET /api/me` znova, tentoraz už s `JSESSIONID`.
+15. **BFF → FE:** Backend vráti `200` a payload s userom a rolami (`ADMIN/HR`).
 ---
 
 ## Login flow — detailný diagram
@@ -156,6 +172,32 @@ sequenceDiagram
   FE->>BFF: GET /api/me
   BFF-->>FE: 200 me payload
 ```
+**Kroky v logout diagrame (po bodoch):**
+1. **Browser → FE:** Browser načíta frontend `GET /`.
+2. **FE → BFF:** Frontend zavolá `GET /api/me` (kontrola, či je user prihlásený).
+3. **BFF → FE:** Backend vráti `401/302 (login)`, lebo neexistuje platná session.
+
+4. **Browser → BFF:** Browser ide na `GET /oauth2/authorization/keycloak` (štart OIDC login flow v Spring).
+5. **BFF (Note):** Backend vytvorí `state` a `nonce` a uloží ich do server-side session (ochrana flow).
+6. **BFF → Browser:** Backend odpovie `302` redirectom na Keycloak `/auth`.
+
+7. **Browser → KC:** Browser zavolá Keycloak authorization endpoint `GET /auth` (už obsahuje `state`/`nonce` a ďalšie parametre).
+8. **KC → Browser:** Keycloak po prihlásení vráti `302` redirect na backend callback `GET /login/oauth2/code/keycloak` s `code` a `state`.
+9. **Browser → BFF:** Browser zavolá backend callback `GET /login/oauth2/code/keycloak`.
+10. **BFF (Note):** Backend overí `state` (musí sedieť s tým, čo je uložené v session).
+11. **BFF → KC:** Backend zavolá Keycloak `POST /token` (server-to-server) a vymení `code` za tokeny.
+12. **KC → BFF:** Keycloak vráti tokeny.
+13. **BFF (Note):** Backend:
+    - vytvorí autentifikovanú session (SecurityContext v session),
+    - namapuje roly z claimu `roles` na `ROLE_ADMIN/ROLE_HR`,
+    - pripraví cookies pre browser (`JSESSIONID`, `XSRF-TOKEN`).
+14. **BFF → Browser:** Backend spraví `302` redirect späť na FE (`/`).
+15. **Browser (Note):** Browser má nastavené cookies pre backend:
+    - `JSESSIONID` (HttpOnly)
+    - `XSRF-TOKEN` (pre CSRF)
+
+16. **FE → BFF:** Frontend zavolá `GET /api/me` znova (už s `JSESSIONID`).
+17. **BFF → FE:** Backend vráti `200` a payload s identitou a rolami. 
 ---
 
 # Logout flow (podrobne)
@@ -178,7 +220,6 @@ Logout je kombinácia:
 
 ## Logout flow — diagram (Mermaid)
 
-
 ```mermaid
 sequenceDiagram
   autonumber
@@ -199,7 +240,17 @@ sequenceDiagram
   FE->>BFF: GET /api/me
   BFF-->>FE: 401/302 (not authenticated)
 ```
-
+**Kroky v logout diagrame (po bodoch):**
+1. Používateľ klikne **Logout** vo fronte.
+2. **FE → BFF:** Frontend pošle `POST /logout` **s cookies** (session) a **CSRF headerom** `X-XSRF-TOKEN`.
+3. **BFF (Note):** Backend overí CSRF token (ak nesedí, request odmietne) a potom invaliduje session (lokálny logout).
+4. **BFF → U:** Backend vráti `302` redirect na Keycloak end-session endpoint (aby sa zrušilo aj SSO prihlásenie).
+5. **U → KC:** Browser zavolá Keycloak logout endpoint s `post_logout_redirect_uri` nastaveným na FE.
+6. **KC (Note):** Keycloak zruší SSO session cookies.
+7. **KC → U:** Keycloak presmeruje používateľa späť na frontend (`302 -> FE /`).
+8. **FE → BFF:** Frontend zavolá `GET /api/me` (kontrola prihlásenia po logoute).
+9. **BFF → FE:** Backend už nemá session → vráti `401/302` (user je odhlásený, prípadne sa spustí login flow).
+    
 ---
 
 ## API kontrakt
@@ -207,6 +258,7 @@ sequenceDiagram
 ### GET /api/me
 - Auth: vyžaduje autentifikovanú session (JSESSIONID)
 - Response (príklad):
+json { "username": "example.user", "name": "Example User", "email": "example.user@example.invalid", "roles": ["ADMIN", "HR"] }
 
 ---
 # Variant A: Role mapping (UPPERCASE)
