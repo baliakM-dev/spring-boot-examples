@@ -121,18 +121,22 @@ Používame **OAuth2 Authorization Code Flow** s OIDC, kde OAuth klient je **bac
 
 ```
 
-**Kroky v diagrame (po bodoch):**
+**Kroky v diagrame (presne podľa šípok):**
 
-1. Browser načíta FE (`GET /`).
-2. FE zavolá backend `GET /api/me` – kontrola, či existuje prihlásená session.
-3. Ak session neexistuje, backend vráti `401/302` a začne login flow.
-4. Browser ide na `/oauth2/authorization/keycloak` (štart OIDC).
-5. Backend vytvorí `state` + `nonce`, uloží ich do session a redirectne na Keycloak `/auth`.
-6. Keycloak spraví login a redirectne späť na backend callback s `code` + `state`.
-7. Backend overí `state`, potom server-to-server zavolá Keycloak `POST /token`.
-8. Backend vytvorí autentifikovanú session a namapuje roly z claimu `roles` na `ROLE_ADMIN/ROLE_HR`.
-9. Backend nastaví cookies `JSESSIONID` (HttpOnly) a `XSRF-TOKEN` (CSRF) a pošle redirect na FE.
-10. FE znova zavolá `GET /api/me` a dostane user payload + roly.
+1. **Browser → FE:** `GET /` (načítanie frontendu).
+2. **FE → Browser:** `App loaded` (FE sa načítal v prehliadači).
+3. **FE → BFF:** `GET /api/me` (kontrola, či existuje prihlásená session).
+4. **BFF → FE:** `401/302 (login)` (session neexistuje/neplatná → treba login).
+5. **Browser → BFF:** `GET /oauth2/authorization/keycloak` (štart OIDC flow).
+6. **BFF → Browser:** `302 -> KC /auth` (redirect na Keycloak; backend si medzi tým uloží `state` + `nonce` do session).
+7. **Browser → KC:** `GET /auth (OIDC login)` (Keycloak login/SSO).
+8. **KC → Browser:** `302 -> BFF callback (code, state)` (redirect späť na backend).
+9. **Browser → BFF:** `GET /login/oauth2/code/keycloak` (callback; backend overí `state`).
+10. **BFF → KC:** `POST /token (server-to-server)` (výmena `code` za tokeny).
+11. **KC → BFF:** `tokens` (Keycloak vráti tokeny).
+12. **BFF → Browser:** `302 -> FE /` (backend vytvorí session, namapuje roly, nastaví cookies `JSESSIONID` + `XSRF-TOKEN`).
+13. **FE → BFF:** `GET /api/me` (už s `JSESSIONID`).
+14. **BFF → FE:** `200 me payload (roles)` (vráti user info + roly).
     
 ---
 
